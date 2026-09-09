@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Basta en Vivo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
+        .pantalla { display: none; background: white; padding: 20px; border-radius: 10px; width: 350px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        .activa { display: block; }
+        input, button { padding: 10px; margin: 5px; width: 90%; box-sizing: border-box;}
+        button { background-color: #28a745; color: white; border: none; cursor: pointer; border-radius: 5px; }
+        button:hover { background-color: #218838; }
+        ul { text-align: left; }
+    </style>
+</head>
+<body>
+
+    <!-- PANTALLA 1: INICIO -->
+    <div id="pantalla_inicio" class="pantalla activa">
+        <h1>Basta en Vivo</h1>
+        <input type="text" id="nombre_jugador" placeholder="Tu Nombre">
+        <br><br>
+        <button onclick="crearSala()">Crear Nueva Sala</button>
+        <hr>
+        <input type="text" id="codigo_ingreso" placeholder="Código de Sala (ej. ABCD)">
+        <button onclick="unirseSala()" style="background-color: #007bff;">Unirse a Sala</button>
+    </div>
+
+    <!-- PANTALLA 2: LOBBY -->
+    <div id="pantalla_lobby" class="pantalla">
+        <h2>Sala: <span id="ver_codigo"></span></h2>
+        <h3>Jugadores Conectados:</h3>
+        <ul id="lista_jugadores"></ul>
+        <h3>Categorías para jugar:</h3>
+        <ul id="lista_categorias"></ul>
+        <div id="controles_host" style="display: none; background: #eee; padding: 10px; border-radius: 5px;">
+            <input type="text" id="nueva_categoria" placeholder="Añadir categoría (ej. Marcas)">
+            <button onclick="agregarCategoria()">Añadir Categoría</button>
+            <br><br>
+            <button onclick="iniciarJuego()" style="background-color: #dc3545;">¡INICIAR JUEGO!</button>
+        </div>
+    </div>
+
+    <!-- PANTALLA 3: JUEGO -->
+    <div id="pantalla_juego" class="pantalla">
+        <h2>Letra de la ronda: <span id="letra_activa" style="font-size: 2em; color: #007bff;">?</span></h2>
+        <div id="contenedor_categorias" style="text-align: left; margin: 20px 0;"></div>
+        <h3 id="mensaje_basta" style="display: none; color: #dc3545;"></h3>
+        <h1 id="temporizador" style="display: none; color: red; font-size: 4em; margin: 0;">10</h1>
+        <br>
+        <button onclick="gritarBasta()" id="btn_basta" style="background-color: #dc3545; font-size: 1.2em; padding: 15px;">
+            ¡BASTA PARA MÍ, BASTA PARA TODOS!
+        </button>
+    </div>
+
+    <!-- PANTALLA 4: VOTACIÓN -->
+    <div id="pantalla_votacion" class="pantalla">
+        <h2>Fase de Revisión</h2>
+        <p>Discutan y marquen si las palabras son válidas o no.</p>
+        <div id="contenedor_votacion" style="text-align: left;"></div>
+        <br>
+        <div id="controles_votacion_host" style="display: none; margin-top: 20px;">
+            <button onclick="iniciarJuego()" style="background-color: #28a745;">Ir a la Siguiente Ronda</button>
+        </div>
+    </div>
+
+    <!-- PANTALLA 5: FIN DEL JUEGO -->
+    <div id="pantalla_fin" class="pantalla">
+        <h1>¡Fin del Juego!</h1>
+        <div id="podio_final" style="background:#fff3cd; padding:20px; border-radius:10px; margin: 20px 0;"></div>
+        <button onclick="location.reload()" style="background-color: #007bff;">Jugar de Nuevo</button>
+    </div>
+
+    <script>
+        const socket = io();
+        let miCodigoDeSala = "";
+        let soyHost = false;
+
+        function crearSala() {
+            const nombre = document.getElementById('nombre_jugador').value;
+            if(!nombre) return alert("Escribe tu nombre primero");
+            socket.emit('crear_sala', { nombre: nombre });
+        }
+
+        function unirseSala() {
+            const nombre = document.getElementById('nombre_jugador').value;
+            const codigo = document.getElementById('codigo_ingreso').value;
+            if(!nombre || !codigo) return alert("Falta nombre o código");
+            socket.emit('unirse_sala', { nombre: nombre, codigo: codigo });
+        }
+
+        function agregarCategoria() {
+            const categoria = document.getElementById('nueva_categoria').value;
+            if(categoria !== "") {
+                socket.emit('agregar_categoria', { codigo: miCodigoDeSala, categoria: categoria });
+                document.getElementById('nueva_categoria').value = ""; 
+            }
+        }
+
+        function iniciarJuego() {
+            socket.emit('iniciar_juego', { codigo: miCodigoDeSala });
+        }
+
+        function gritarBasta() {
+            const nombre = document.getElementById('nombre_jugador').value;
+            document.getElementById('btn_basta').disabled = true;
+            socket.emit('basta_presionado', { codigo: miCodigoDeSala, nombre: nombre });
+        }
+
+        function terminarRonda() {
+            document.getElementById('mensaje_basta').innerText = "¡TIEMPO AGOTADO! Enviando respuestas...";
+            const inputs = document.querySelectorAll('#contenedor_categorias input');
+            let misRespuestas = {}; 
+            
+            inputs.forEach(input => {
+                input.disabled = true; 
+                const categoria = input.id.replace('input_', '');
+                misRespuestas[categoria] = input.value.trim().toUpperCase(); 
+            });
+            
+            const nombre = document.getElementById('nombre_jugador').value;
+            socket.emit('enviar_respuestas', { codigo: miCodigoDeSala, nombre: nombre, respuestas: misRespuestas });
+        }
+
+        socket.on('sala_creada', function(datos) {
+            miCodigoDeSala = datos.codigo;
+            soyHost = true; 
+            mostrarLobby(datos.codigo, datos.sala, true);
+        });
+
+        socket.on('ingreso_exitoso', function(datos) {
+            miCodigoDeSala = datos.codigo;
+            mostrarLobby(datos.codigo, datos.sala, false); 
+        });
+
+        socket.on('sala_actualizada', function(sala) {
+            actualizarListas(sala);
+        });
+
+        socket.on('juego_iniciado', function(datos) {
+            document.getElementById('pantalla_lobby').classList.remove('activa');
+            document.getElementById('pantalla_votacion').classList.remove('activa');
+            document.getElementById('pantalla_juego').classList.add('activa');
+            
+            document.getElementById('letra_activa').innerText = datos.letra;
+            
+            document.getElementById('btn_basta').style.display = 'inline-block';
+            document.getElementById('btn_basta').disabled = false;
+            document.getElementById('temporizador').style.display = 'none';
+            document.getElementById('mensaje_basta').style.display = 'none';
+            
+            const contenedor = document.getElementById('contenedor_categorias');
+            contenedor.innerHTML = ""; 
+            
+            datos.categorias.forEach(function(cat) {
+                contenedor.innerHTML += `
+                    <div style="margin-bottom: 10px;">
+                        <label><strong>${cat}</strong></label>
+                        <input type="text" id="input_${cat}" placeholder="${cat} con la letra ${datos.letra}">
+                    </div>
+                `;
+            });
+        });
+
+        socket.on('iniciar_reloj', function(datos) {
+            document.getElementById('btn_basta').style.display = 'none';
+            
+            const msj = document.getElementById('mensaje_basta');
+            msj.innerText = "¡" + datos.quien_fue + " gritó BASTA!";
+            msj.style.display = 'block';
+            
+            const reloj = document.getElementById('temporizador');
+            reloj.style.display = 'block';
+            reloj.innerText = "10";
+            
+            let tiempo = 10;
+            const intervalo = setInterval(function() {
+                tiempo--;
+                reloj.innerText = tiempo;
+                
+                if(tiempo <= 0) {
+                    clearInterval(intervalo); 
+                    terminarRonda(); 
+                }
+            }, 1000);
+        });
+
+        socket.on('ir_a_votacion', function(datos_servidor) {
+            document.getElementById('pantalla_juego').classList.remove('activa');
+            document.getElementById('pantalla_votacion').classList.add('activa');
+            
+            const contenedor = document.getElementById('contenedor_votacion');
+            const respuestas = datos_servidor.respuestas;
+            const marcador = datos_servidor.marcador;
+            
+            let html = "<div style='background:#e9ecef; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;'><h3>Marcador Total:</h3><p>";
+            for (const [jugador, puntos] of Object.entries(marcador)) {
+                 html += `<strong style="font-size:1.2em;">${jugador}:</strong> ${puntos} pts &nbsp;&nbsp;&nbsp;`;
+            }
+            html += "</p></div>";
+            
+            const jugadores = Object.keys(respuestas);
+            if(jugadores.length > 0) {
+                const categorias = Object.keys(respuestas[jugadores[0]]);
+                categorias.forEach(cat => {
+                    html += `<h3 style="color: #007bff; border-bottom: 2px solid #ccc;">${cat}</h3><ul>`;
+                    jugadores.forEach(jugador => {
+                        const texto = respuestas[jugador][cat];
+                        html += `
+                            <li style="margin-bottom: 10px; list-style-type: none;">
+                                <strong>${jugador}:</strong> <span style="font-size: 1.2em;">${texto}</span>
+                                <button onclick="estaBien(this)" style="width: auto; padding: 5px 10px; margin-left: 10px;">👍</button>
+                                <button onclick="estaMal(this)" style="width: auto; padding: 5px 10px; background-color: #dc3545;">👎</button>
+                            </li>
+                        `;
+                    });
+                    html += `</ul>`;
+                });
+            }
+            
+            contenedor.innerHTML = html;
+
+            if (soyHost === true) {
+                document.getElementById('controles_votacion_host').style.display = 'block';
+            }
+        });
+
+        socket.on('fin_del_juego', function(puntuaciones_finales) {
+            document.getElementById('pantalla_votacion').classList.remove('activa');
+            document.getElementById('pantalla_juego').classList.remove('activa');
+            document.getElementById('pantalla_fin').classList.add('activa');
+            
+            let html = "<h2>Marcador Final:</h2><ul style='font-size: 1.5em; list-style:none; padding:0;'>";
+            const jugadores_ordenados = Object.entries(puntuaciones_finales).sort((a, b) => b[1] - a[1]);
+            
+            jugadores_ordenados.forEach((dato, index) => {
+                const nombre = dato[0];
+                const puntos = dato[1];
+                let medalla = index === 0 ? "🏆" : "🏅"; 
+                html += `<li>${medalla} <b>${nombre}:</b> ${puntos} puntos</li><br>`;
+            });
+            
+            html += "</ul>";
+            document.getElementById('podio_final').innerHTML = html;
+        });
+
+        socket.on('error', function(mensaje) {
+            alert(mensaje);
+        });
+
+        function mostrarLobby(codigo, sala, esHost) {
+            document.getElementById('pantalla_inicio').classList.remove('activa');
+            document.getElementById('pantalla_lobby').classList.add('activa');
+            document.getElementById('ver_codigo').innerText = codigo;
+            
+            if(esHost) {
+                document.getElementById('controles_host').style.display = 'block';
+            }
+            actualizarListas(sala);
+        }
+
+        function actualizarListas(sala) {
+            const ulJugadores = document.getElementById('lista_jugadores');
+            ulJugadores.innerHTML = "";
+            sala.jugadores.forEach(j => ulJugadores.innerHTML += `<li>${j}</li>`);
+
+            const ulCategorias = document.getElementById('lista_categorias');
+            ulCategorias.innerHTML = "";
+            sala.categorias.forEach(c => ulCategorias.innerHTML += `<li>${c}</li>`);
+        }
+
+        function estaBien(btn) {
+            btn.parentElement.style.backgroundColor = "#d4edda"; 
+        }
+        function estaMal(btn) {
+            btn.parentElement.style.backgroundColor = "#f8d7da"; 
+        }
+    </script>
+</body>
+</html>
