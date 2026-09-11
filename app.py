@@ -23,15 +23,15 @@ def crear_sala(datos):
     
     salas[codigo] = {
         'jugadores': [nombre],
-        'categorias': ["Nombre", "Animal", "Ciudad", "Flor/Fruto", "Cosa"],
+        'categorias': ["Nombre", "Apellido", "Ciudad o Pais", "Flor/Fruto", "Animal", "Destino Turistico Mexicano"],
         'host': nombre,
         'letras_usadas': [],
         'respuestas': {},
+        'votos_contra': {}, # NUEVO: Memoria para los votos
         'ronda_actual': 0,
         'rondas_totales': 3,
-        'puntuaciones': {nombre: 0} # Iniciamos los puntos desde cero
+        'puntuaciones': {nombre: 0}
     }
-    
     join_room(codigo) 
     emit('sala_creada', {'codigo': codigo, 'sala': salas[codigo]})
 
@@ -39,10 +39,9 @@ def crear_sala(datos):
 def unirse_sala(datos):
     nombre = datos['nombre']
     codigo = datos['codigo'].upper()
-    
     if codigo in salas:
         salas[codigo]['jugadores'].append(nombre)
-        salas[codigo]['puntuaciones'][nombre] = 0 # Le damos 0 puntos al entrar
+        salas[codigo]['puntuaciones'][nombre] = 0
         join_room(codigo)
         emit('ingreso_exitoso', {'codigo': codigo, 'sala': salas[codigo]})
         emit('sala_actualizada', salas[codigo], to=codigo)
@@ -53,7 +52,6 @@ def unirse_sala(datos):
 def agregar_categoria(datos):
     codigo = datos['codigo']
     nueva_categoria = datos['categoria']
-    
     if codigo in salas:
         salas[codigo]['categorias'].append(nueva_categoria)
         emit('sala_actualizada', salas[codigo], to=codigo)
@@ -61,78 +59,122 @@ def agregar_categoria(datos):
 @socketio.on('iniciar_juego')
 def iniciar_juego(datos):
     codigo = datos['codigo']
-    
     if codigo in salas:
         sala = salas[codigo]
-        
-        if sala['ronda_actual'] >= sala['rondas_totales']:
-            emit('fin_del_juego', sala.get('puntuaciones', {}), to=codigo)
-            return
-            
-        sala['ronda_actual'] += 1
+        sala['ronda_actual'] = 1 # Forzamos a que inicie la ronda 1
         
         abecedario = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
         disponibles = [l for l in abecedario if l not in sala['letras_usadas']]
-        
         letra_elegida = random.choice(disponibles)
         sala['letras_usadas'].append(letra_elegida)
         
         emit('juego_iniciado', {
             'letra': letra_elegida, 
             'categorias': sala['categorias'],
-            'ronda': sala['ronda_actual'],
-            'total_rondas': sala['rondas_totales']
+            'ronda': sala['ronda_actual']
         }, to=codigo)
 
 @socketio.on('basta_presionado')
 def basta_presionado(datos):
-    codigo = datos['codigo']
-    nombre_jugador = datos['nombre']
-    emit('iniciar_reloj', {'quien_fue': nombre_jugador}, to=codigo)
+    emit('iniciar_reloj', {'quien_fue': datos['nombre']}, to=datos['codigo'])
 
 @socketio.on('enviar_respuestas')
 def recibir_respuestas(datos):
     codigo = datos['codigo']
     nombre = datos['nombre']
-    mis_palabras = datos['respuestas']
+    if codigo in salas:
+        sala = salas[codigo]
+        sala['respuestas'][nombre] = datos['respuestas']
+        
+        if len(sala['respuestas']) == len(sala['jugadores']):
+            # Preparamos los contadores de votos para cada jugador y categoría
+            sala['votos_contra'] = {j: {cat: [] for cat in sala['categorias']} for j in sala['jugadores']}
+            
+            emit('ir_a_votacion', {
+                'respuestas': sala['respuestas'],
+                'marcador': sala['puntuaciones'],
+                'total_jugadores': len(sala['jugadores'])
+            }, to=codigo)
+
+# NUEVO EVENTO: Registra un voto negativo en tiempo real
+@socketio.on('votar_contra')
+def votar_contra(datos):
+    codigo = datos['codigo']
+    evaluado = datos['evaluado']
+    categoria = datos['categoria']
+    votante = datos['votante']
     
     if codigo in salas:
         sala = salas[codigo]
-        sala['respuestas'][nombre] = mis_palabras
+        lista_votos = sala['votos_contra'][evaluado][categoria]
         
-        if len(sala['respuestas']) == len(sala['jugadores']):
-            respuestas_con_puntos = {}
+        # Si ya había votado, quita el voto; si no, lo pone
+        if votante in lista_votos:
+            lista_votos.remove(votante)
+        else:
+            lista_votos.append(votante)
+            
+        limite = max(1, len(sala['jugadores']) // 2)
+        
+        # Avisa a todas las pantallas para actualizar los colores
+        emit('actualizar_voto', {
+            'evaluado': evaluado,
+            'categoria': categoria,
+            'num_votos': len(lista_votos),
+            'limite': limite
+        }, to=codigo)
+
+# NUEVO EVENTO: El Host cierra la votación, calcula puntos y avanza
+@socketio.on('cerrar_ronda_y_avanzar')
+def cerrar_ronda(datos):
+    codigo = datos['codigo']
+    if codigo in salas:
+        sala = salas[codigo]
+        limite = max(1, len(sala['jugadores']) // 2)
+        
+        # 1. Asignar puntos considerando los votos
+        for cat in sala['categorias']:
+            palabras_validas = []
+            # Recolectar palabras que sobrevivieron la votación
             for j in sala['jugadores']:
-                respuestas_con_puntos[j] = {}
+                palabra = sala['respuestas'][j].get(cat, "").strip().upper()
+                votos = len(sala['votos_contra'][j][cat])
+                if palabra != "" and votos < limite:
+                    palabras_validas.append(palabra)
+                    
+            # Asignar el puntaje
+            for j in sala['jugadores']:
+                palabra = sala['respuestas'][j].get(cat, "").strip().upper()
+                votos = len(sala['votos_contra'][j][cat])
                 
-            for cat in sala['categorias']:
-                lista_palabras = []
-                for j in sala['jugadores']:
-                    palabra = sala['respuestas'][j].get(cat, "").strip().upper()
-                    if palabra != "":
-                        lista_palabras.append(palabra)
-                        
-                for j in sala['jugadores']:
-                    palabra = sala['respuestas'][j].get(cat, "").strip().upper()
-                    if palabra == "":
-                        puntos = 0
-                    elif lista_palabras.count(palabra) == 1:
-                        puntos = 100
-                    else:
-                        puntos = 50
-                        
-                    sala['puntuaciones'][j] += puntos
-                    if palabra == "":
-                        respuestas_con_puntos[j][cat] = "*(En blanco)* (0 pts)"
-                    else:
-                        respuestas_con_puntos[j][cat] = f"{palabra} ({puntos} pts)"
+                if palabra == "" or votos >= limite:
+                    puntos = 0
+                elif palabras_validas.count(palabra) == 1:
+                    puntos = 100
+                else:
+                    puntos = 50
+                    
+                sala['puntuaciones'][j] += puntos
+                
+        # Limpiamos para la próxima ronda
+        sala['respuestas'] = {}
+        sala['votos_contra'] = {}
+        
+        # 2. Decidir si terminó el juego o vamos a la siguiente ronda
+        if sala['ronda_actual'] >= sala['rondas_totales']:
+            emit('fin_del_juego', sala['puntuaciones'], to=codigo)
+        else:
+            sala['ronda_actual'] += 1
+            abecedario = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
+            disponibles = [l for l in abecedario if l not in sala['letras_usadas']]
+            letra_elegida = random.choice(disponibles)
+            sala['letras_usadas'].append(letra_elegida)
             
-            emit('ir_a_votacion', {
-                'respuestas': respuestas_con_puntos,
-                'marcador': sala['puntuaciones']
+            emit('juego_iniciado', {
+                'letra': letra_elegida, 
+                'categorias': sala['categorias'],
+                'ronda': sala['ronda_actual']
             }, to=codigo)
-            
-            sala['respuestas'] = {} 
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)

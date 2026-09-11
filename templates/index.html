@@ -6,43 +6,41 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
-        .pantalla { display: none; background: white; padding: 20px; border-radius: 10px; width: 350px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        .pantalla { display: none; background: white; padding: 20px; border-radius: 10px; width: 400px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
         .activa { display: block; }
         input, button { padding: 10px; margin: 5px; width: 90%; box-sizing: border-box;}
-        button { background-color: #28a745; color: white; border: none; cursor: pointer; border-radius: 5px; }
+        button { background-color: #28a745; color: white; border: none; cursor: pointer; border-radius: 5px; transition: 0.3s;}
         button:hover { background-color: #218838; }
-        ul { text-align: left; }
+        ul { text-align: left; padding: 0; }
+        .palabra-item { margin-bottom: 15px; list-style-type: none; padding: 15px; border-radius: 8px; border: 1px solid #ccc; transition: all 0.3s; }
     </style>
 </head>
 <body>
 
-    <!-- PANTALLA 1: INICIO -->
     <div id="pantalla_inicio" class="pantalla activa">
         <h1>Basta en Vivo</h1>
         <input type="text" id="nombre_jugador" placeholder="Tu Nombre">
         <br><br>
         <button onclick="crearSala()">Crear Nueva Sala</button>
         <hr>
-        <input type="text" id="codigo_ingreso" placeholder="Código de Sala (ej. ABCD)">
+        <input type="text" id="codigo_ingreso" placeholder="Código de Sala">
         <button onclick="unirseSala()" style="background-color: #007bff;">Unirse a Sala</button>
     </div>
 
-    <!-- PANTALLA 2: LOBBY -->
     <div id="pantalla_lobby" class="pantalla">
         <h2>Sala: <span id="ver_codigo"></span></h2>
         <h3>Jugadores Conectados:</h3>
-        <ul id="lista_jugadores"></ul>
+        <ul id="lista_jugadores" style="padding-left: 40px;"></ul>
         <h3>Categorías para jugar:</h3>
-        <ul id="lista_categorias"></ul>
+        <ul id="lista_categorias" style="padding-left: 40px;"></ul>
         <div id="controles_host" style="display: none; background: #eee; padding: 10px; border-radius: 5px;">
-            <input type="text" id="nueva_categoria" placeholder="Añadir categoría (ej. Marcas)">
+            <input type="text" id="nueva_categoria" placeholder="Añadir categoría">
             <button onclick="agregarCategoria()">Añadir Categoría</button>
             <br><br>
             <button onclick="iniciarJuego()" style="background-color: #dc3545;">¡INICIAR JUEGO!</button>
         </div>
     </div>
 
-    <!-- PANTALLA 3: JUEGO -->
     <div id="pantalla_juego" class="pantalla">
         <h2>Letra de la ronda: <span id="letra_activa" style="font-size: 2em; color: #007bff;">?</span></h2>
         <div id="contenedor_categorias" style="text-align: left; margin: 20px 0;"></div>
@@ -54,18 +52,15 @@
         </button>
     </div>
 
-    <!-- PANTALLA 4: VOTACIÓN -->
     <div id="pantalla_votacion" class="pantalla">
         <h2>Fase de Revisión</h2>
-        <p>Discutan y marquen si las palabras son válidas o no.</p>
         <div id="contenedor_votacion" style="text-align: left;"></div>
         <br>
         <div id="controles_votacion_host" style="display: none; margin-top: 20px;">
-            <button onclick="iniciarJuego()" style="background-color: #28a745;">Ir a la Siguiente Ronda</button>
+            <button onclick="cerrarRonda()" style="background-color: #28a745; font-size: 1.1em; padding: 15px;">Confirmar Puntos y Avanzar</button>
         </div>
     </div>
 
-    <!-- PANTALLA 5: FIN DEL JUEGO -->
     <div id="pantalla_fin" class="pantalla">
         <h1>¡Fin del Juego!</h1>
         <div id="podio_final" style="background:#fff3cd; padding:20px; border-radius:10px; margin: 20px 0;"></div>
@@ -79,7 +74,7 @@
 
         function crearSala() {
             const nombre = document.getElementById('nombre_jugador').value;
-            if(!nombre) return alert("Escribe tu nombre primero");
+            if(!nombre) return alert("Escribe tu nombre");
             socket.emit('crear_sala', { nombre: nombre });
         }
 
@@ -109,7 +104,7 @@
         }
 
         function terminarRonda() {
-            document.getElementById('mensaje_basta').innerText = "¡TIEMPO AGOTADO! Enviando respuestas...";
+            document.getElementById('mensaje_basta').innerText = "Enviando respuestas...";
             const inputs = document.querySelectorAll('#contenedor_categorias input');
             let misRespuestas = {}; 
             
@@ -121,6 +116,30 @@
             
             const nombre = document.getElementById('nombre_jugador').value;
             socket.emit('enviar_respuestas', { codigo: miCodigoDeSala, nombre: nombre, respuestas: misRespuestas });
+        }
+
+        // NUEVA FUNCIÓN: Enviar mi voto negativo
+        function votarContra(evaluado, categoria, btn) {
+            const miNombre = document.getElementById('nombre_jugador').value;
+            if(miNombre === evaluado) {
+                return alert("No puedes votar contra tus propias palabras.");
+            }
+            
+            // Efecto visual local para saber que ya votaste
+            if(btn.style.backgroundColor === "orange") {
+                btn.style.backgroundColor = "#dc3545"; // Regresar a rojo
+                btn.innerText = "👎 Rechazar";
+            } else {
+                btn.style.backgroundColor = "orange";
+                btn.innerText = "👎 Votaste";
+            }
+            
+            socket.emit('votar_contra', { codigo: miCodigoDeSala, evaluado: evaluado, categoria: categoria, votante: miNombre });
+        }
+
+        // NUEVA FUNCIÓN: El Host avanza
+        function cerrarRonda() {
+            socket.emit('cerrar_ronda_y_avanzar', { codigo: miCodigoDeSala });
         }
 
         socket.on('sala_creada', function(datos) {
@@ -144,7 +163,6 @@
             document.getElementById('pantalla_juego').classList.add('activa');
             
             document.getElementById('letra_activa').innerText = datos.letra;
-            
             document.getElementById('btn_basta').style.display = 'inline-block';
             document.getElementById('btn_basta').disabled = false;
             document.getElementById('temporizador').style.display = 'none';
@@ -152,23 +170,19 @@
             
             const contenedor = document.getElementById('contenedor_categorias');
             contenedor.innerHTML = ""; 
-            
             datos.categorias.forEach(function(cat) {
                 contenedor.innerHTML += `
                     <div style="margin-bottom: 10px;">
                         <label><strong>${cat}</strong></label>
-                        <input type="text" id="input_${cat}" placeholder="${cat} con la letra ${datos.letra}">
-                    </div>
-                `;
+                        <input type="text" id="input_${cat}" placeholder="${cat} con ${datos.letra}">
+                    </div>`;
             });
         });
 
         socket.on('iniciar_reloj', function(datos) {
             document.getElementById('btn_basta').style.display = 'none';
-            
-            const msj = document.getElementById('mensaje_basta');
-            msj.innerText = "¡" + datos.quien_fue + " gritó BASTA!";
-            msj.style.display = 'block';
+            document.getElementById('mensaje_basta').innerText = "¡" + datos.quien_fue + " gritó BASTA!";
+            document.getElementById('mensaje_basta').style.display = 'block';
             
             const reloj = document.getElementById('temporizador');
             reloj.style.display = 'block';
@@ -178,7 +192,6 @@
             const intervalo = setInterval(function() {
                 tiempo--;
                 reloj.innerText = tiempo;
-                
                 if(tiempo <= 0) {
                     clearInterval(intervalo); 
                     terminarRonda(); 
@@ -186,6 +199,7 @@
             }, 1000);
         });
 
+        // ACTUALIZADO: Dibuja la lista para votar
         socket.on('ir_a_votacion', function(datos_servidor) {
             document.getElementById('pantalla_juego').classList.remove('activa');
             document.getElementById('pantalla_votacion').classList.add('activa');
@@ -193,12 +207,14 @@
             const contenedor = document.getElementById('contenedor_votacion');
             const respuestas = datos_servidor.respuestas;
             const marcador = datos_servidor.marcador;
+            const limite = Math.max(1, Math.floor(datos_servidor.total_jugadores / 2));
             
-            let html = "<div style='background:#e9ecef; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;'><h3>Marcador Total:</h3><p>";
+            let html = `<div style='background:#e9ecef; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;'>
+                            <h4>Marcador Actual:</h4><p>`;
             for (const [jugador, puntos] of Object.entries(marcador)) {
-                 html += `<strong style="font-size:1.2em;">${jugador}:</strong> ${puntos} pts &nbsp;&nbsp;&nbsp;`;
+                 html += `<strong>${jugador}:</strong> ${puntos} pts &nbsp;&nbsp;`;
             }
-            html += "</p></div>";
+            html += `</p></div><p style='color:#dc3545; font-size:0.9em; text-align:center;'>Se necesitan ${limite} votos para tachar una palabra.</p>`;
             
             const jugadores = Object.keys(respuestas);
             if(jugadores.length > 0) {
@@ -206,23 +222,51 @@
                 categorias.forEach(cat => {
                     html += `<h3 style="color: #007bff; border-bottom: 2px solid #ccc;">${cat}</h3><ul>`;
                     jugadores.forEach(jugador => {
-                        const texto = respuestas[jugador][cat];
+                        const texto = respuestas[jugador][cat] || "*(En blanco)*";
+                        const id_li = `li_${jugador}_${cat}`;
+                        const id_span = `span_voto_${jugador}_${cat}`;
+                        
                         html += `
-                            <li style="margin-bottom: 10px; list-style-type: none;">
-                                <strong>${jugador}:</strong> <span style="font-size: 1.2em;">${texto}</span>
-                                <button onclick="estaBien(this)" style="width: auto; padding: 5px 10px; margin-left: 10px;">👍</button>
-                                <button onclick="estaMal(this)" style="width: auto; padding: 5px 10px; background-color: #dc3545;">👎</button>
+                            <li id="${id_li}" class="palabra-item">
+                                <strong>${jugador}:</strong> <span style="font-size: 1.3em;">${texto}</span>
+                                <br>
+                                <button onclick="votarContra('${jugador}', '${cat}', this)" style="width: auto; padding: 5px 15px; margin-top: 10px; background-color: #dc3545;">👎 Rechazar</button>
+                                <span id="${id_span}" style="color: #dc3545; margin-left: 10px; font-weight:bold; font-size:0.9em;"></span>
                             </li>
                         `;
                     });
                     html += `</ul>`;
                 });
             }
-            
             contenedor.innerHTML = html;
 
             if (soyHost === true) {
                 document.getElementById('controles_votacion_host').style.display = 'block';
+            }
+        });
+
+        // NUEVO: Recibir votos en tiempo real y tachar palabras
+        socket.on('actualizar_voto', function(datos) {
+            const id_li = `li_${datos.evaluado}_${datos.categoria}`;
+            const id_span = `span_voto_${datos.evaluado}_${datos.categoria}`;
+            
+            const li = document.getElementById(id_li);
+            const span = document.getElementById(id_span);
+            
+            if(span) {
+                span.innerText = datos.num_votos > 0 ? `(${datos.num_votos} votos en contra)` : "";
+            }
+            
+            if(li) {
+                if(datos.num_votos >= datos.limite) {
+                    li.style.textDecoration = "line-through";
+                    li.style.backgroundColor = "#f8d7da";
+                    li.style.color = "#721c24";
+                } else {
+                    li.style.textDecoration = "none";
+                    li.style.backgroundColor = "transparent";
+                    li.style.color = "black";
+                }
             }
         });
 
@@ -235,46 +279,25 @@
             const jugadores_ordenados = Object.entries(puntuaciones_finales).sort((a, b) => b[1] - a[1]);
             
             jugadores_ordenados.forEach((dato, index) => {
-                const nombre = dato[0];
-                const puntos = dato[1];
                 let medalla = index === 0 ? "🏆" : "🏅"; 
-                html += `<li>${medalla} <b>${nombre}:</b> ${puntos} puntos</li><br>`;
+                html += `<li style="margin-bottom:10px;">${medalla} <b>${dato[0]}:</b> ${dato[1]} pts</li>`;
             });
             
             html += "</ul>";
             document.getElementById('podio_final').innerHTML = html;
         });
 
-        socket.on('error', function(mensaje) {
-            alert(mensaje);
-        });
-
+        socket.on('error', function(mensaje) { alert(mensaje); });
         function mostrarLobby(codigo, sala, esHost) {
             document.getElementById('pantalla_inicio').classList.remove('activa');
             document.getElementById('pantalla_lobby').classList.add('activa');
             document.getElementById('ver_codigo').innerText = codigo;
-            
-            if(esHost) {
-                document.getElementById('controles_host').style.display = 'block';
-            }
+            if(esHost) document.getElementById('controles_host').style.display = 'block';
             actualizarListas(sala);
         }
-
         function actualizarListas(sala) {
-            const ulJugadores = document.getElementById('lista_jugadores');
-            ulJugadores.innerHTML = "";
-            sala.jugadores.forEach(j => ulJugadores.innerHTML += `<li>${j}</li>`);
-
-            const ulCategorias = document.getElementById('lista_categorias');
-            ulCategorias.innerHTML = "";
-            sala.categorias.forEach(c => ulCategorias.innerHTML += `<li>${c}</li>`);
-        }
-
-        function estaBien(btn) {
-            btn.parentElement.style.backgroundColor = "#d4edda"; 
-        }
-        function estaMal(btn) {
-            btn.parentElement.style.backgroundColor = "#f8d7da"; 
+            document.getElementById('lista_jugadores').innerHTML = sala.jugadores.map(j => `<li>${j}</li>`).join('');
+            document.getElementById('lista_categorias').innerHTML = sala.categorias.map(c => `<li>${c}</li>`).join('');
         }
     </script>
 </body>
