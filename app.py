@@ -1,3 +1,4 @@
+import math
 import random
 import string
 from flask import Flask, render_template
@@ -23,11 +24,12 @@ def crear_sala(datos):
     
     salas[codigo] = {
         'jugadores': [nombre],
-        'categorias': ["Nombre", "Apellido", "Ciudad o Pais", "Flor/Fruto", "Animal", "Destino Turistico Mexicano"],
+        'categorias': ["Nombre", "Apellido", "Ciudad o País", "Flor/Fruto", "Animal", "Destino Turístico Mexicano"],
         'host': nombre,
         'letras_usadas': [],
         'respuestas': {},
-        'votos_contra': {}, # NUEVO: Memoria para los votos
+        'votos_contra': {}, 
+        'puntos_manuales': {},
         'ronda_actual': 0,
         'rondas_totales': 3,
         'puntuaciones': {nombre: 0}
@@ -61,7 +63,7 @@ def iniciar_juego(datos):
     codigo = datos['codigo']
     if codigo in salas:
         sala = salas[codigo]
-        sala['ronda_actual'] = 1 # Forzamos a que inicie la ronda 1
+        sala['ronda_actual'] = 1 
         
         abecedario = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
         disponibles = [l for l in abecedario if l not in sala['letras_usadas']]
@@ -87,16 +89,40 @@ def recibir_respuestas(datos):
         sala['respuestas'][nombre] = datos['respuestas']
         
         if len(sala['respuestas']) == len(sala['jugadores']):
-            # Preparamos los contadores de votos para cada jugador y categoría
             sala['votos_contra'] = {j: {cat: [] for cat in sala['categorias']} for j in sala['jugadores']}
+            sala['puntos_manuales'] = {j: {} for j in sala['jugadores']} 
+            
+            respuestas_con_puntos = {}
+            for j in sala['jugadores']:
+                respuestas_con_puntos[j] = {}
+                
+            for cat in sala['categorias']:
+                lista_palabras = []
+                for j in sala['jugadores']:
+                    pal = sala['respuestas'][j].get(cat, "").strip().upper()
+                    if pal != "": lista_palabras.append(pal)
+                    
+                for j in sala['jugadores']:
+                    palabra = sala['respuestas'][j].get(cat, "").strip().upper()
+                    
+                    # NUEVA LÓGICA DE PUNTOS AUTOMÁTICOS
+                    if palabra == "":
+                        puntos = 0
+                    elif lista_palabras.count(palabra) == 1:
+                        puntos = 100
+                    elif lista_palabras.count(palabra) == 2:
+                        puntos = 50
+                    else:
+                        puntos = 25 # Si se repite 3 o más veces
+                    
+                    respuestas_con_puntos[j][cat] = {'texto': palabra, 'puntos_auto': puntos}
             
             emit('ir_a_votacion', {
-                'respuestas': sala['respuestas'],
+                'respuestas': respuestas_con_puntos,
                 'marcador': sala['puntuaciones'],
                 'total_jugadores': len(sala['jugadores'])
             }, to=codigo)
 
-# NUEVO EVENTO: Registra un voto negativo en tiempo real
 @socketio.on('votar_contra')
 def votar_contra(datos):
     codigo = datos['codigo']
@@ -108,15 +134,14 @@ def votar_contra(datos):
         sala = salas[codigo]
         lista_votos = sala['votos_contra'][evaluado][categoria]
         
-        # Si ya había votado, quita el voto; si no, lo pone
         if votante in lista_votos:
             lista_votos.remove(votante)
         else:
             lista_votos.append(votante)
             
-        limite = max(1, len(sala['jugadores']) // 2)
+        # NUEVO: Redondeo hacia arriba para el límite de votos
+        limite = math.ceil(len(sala['jugadores']) / 2)
         
-        # Avisa a todas las pantallas para actualizar los colores
         emit('actualizar_voto', {
             'evaluado': evaluado,
             'categoria': categoria,
@@ -124,43 +149,63 @@ def votar_contra(datos):
             'limite': limite
         }, to=codigo)
 
-# NUEVO EVENTO: El Host cierra la votación, calcula puntos y avanza
+@socketio.on('forzar_puntos')
+def forzar_puntos(datos):
+    codigo = datos['codigo']
+    evaluado = datos['evaluado']
+    categoria = datos['categoria']
+    nuevos_puntos = datos['puntos']
+    
+    if codigo in salas:
+        salas[codigo]['puntos_manuales'][evaluado][categoria] = nuevos_puntos
+        emit('actualizar_puntos_UI', {
+            'evaluado': evaluado,
+            'categoria': categoria,
+            'puntos': nuevos_puntos
+        }, to=codigo)
+
 @socketio.on('cerrar_ronda_y_avanzar')
 def cerrar_ronda(datos):
     codigo = datos['codigo']
     if codigo in salas:
         sala = salas[codigo]
-        limite = max(1, len(sala['jugadores']) // 2)
         
-        # 1. Asignar puntos considerando los votos
+        # NUEVO: Redondeo hacia arriba para evaluar al cerrar la ronda
+        limite = math.ceil(len(sala['jugadores']) / 2)
+        
         for cat in sala['categorias']:
             palabras_validas = []
-            # Recolectar palabras que sobrevivieron la votación
             for j in sala['jugadores']:
                 palabra = sala['respuestas'][j].get(cat, "").strip().upper()
                 votos = len(sala['votos_contra'][j][cat])
                 if palabra != "" and votos < limite:
                     palabras_validas.append(palabra)
                     
-            # Asignar el puntaje
             for j in sala['jugadores']:
                 palabra = sala['respuestas'][j].get(cat, "").strip().upper()
                 votos = len(sala['votos_contra'][j][cat])
                 
                 if palabra == "" or votos >= limite:
                     puntos = 0
-                elif palabras_validas.count(palabra) == 1:
-                    puntos = 100
                 else:
-                    puntos = 50
-                    
+                    puntos_forzados = sala['puntos_manuales'][j].get(cat)
+                    if puntos_forzados is not None:
+                        puntos = puntos_forzados
+                    else:
+                        # REGLA 3 ACTUALIZADA
+                        if palabras_validas.count(palabra) == 1:
+                            puntos = 100
+                        elif palabras_validas.count(palabra) == 2:
+                            puntos = 50
+                        else:
+                            puntos = 25
+                            
                 sala['puntuaciones'][j] += puntos
                 
-        # Limpiamos para la próxima ronda
         sala['respuestas'] = {}
         sala['votos_contra'] = {}
+        sala['puntos_manuales'] = {}
         
-        # 2. Decidir si terminó el juego o vamos a la siguiente ronda
         if sala['ronda_actual'] >= sala['rondas_totales']:
             emit('fin_del_juego', sala['puntuaciones'], to=codigo)
         else:

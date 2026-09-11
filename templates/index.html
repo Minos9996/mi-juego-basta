@@ -6,13 +6,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
-        .pantalla { display: none; background: white; padding: 20px; border-radius: 10px; width: 400px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        .pantalla { display: none; background: white; padding: 20px; border-radius: 10px; width: 450px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
         .activa { display: block; }
         input, button { padding: 10px; margin: 5px; width: 90%; box-sizing: border-box;}
         button { background-color: #28a745; color: white; border: none; cursor: pointer; border-radius: 5px; transition: 0.3s;}
-        button:hover { background-color: #218838; }
+        button:hover { filter: brightness(0.9); }
         ul { text-align: left; padding: 0; }
         .palabra-item { margin-bottom: 15px; list-style-type: none; padding: 15px; border-radius: 8px; border: 1px solid #ccc; transition: all 0.3s; }
+        .boton-peque { width: auto; padding: 5px 10px; margin-top: 10px; font-size: 0.9em; }
     </style>
 </head>
 <body>
@@ -118,26 +119,24 @@
             socket.emit('enviar_respuestas', { codigo: miCodigoDeSala, nombre: nombre, respuestas: misRespuestas });
         }
 
-        // NUEVA FUNCIÓN: Enviar mi voto negativo
         function votarContra(evaluado, categoria, btn) {
             const miNombre = document.getElementById('nombre_jugador').value;
-            if(miNombre === evaluado) {
-                return alert("No puedes votar contra tus propias palabras.");
-            }
+            if(miNombre === evaluado) return alert("No puedes votar contra tus propias palabras.");
             
-            // Efecto visual local para saber que ya votaste
             if(btn.style.backgroundColor === "orange") {
-                btn.style.backgroundColor = "#dc3545"; // Regresar a rojo
+                btn.style.backgroundColor = "#dc3545"; 
                 btn.innerText = "👎 Rechazar";
             } else {
                 btn.style.backgroundColor = "orange";
                 btn.innerText = "👎 Votaste";
             }
-            
             socket.emit('votar_contra', { codigo: miCodigoDeSala, evaluado: evaluado, categoria: categoria, votante: miNombre });
         }
 
-        // NUEVA FUNCIÓN: El Host avanza
+        function cambiarPuntos(evaluado, categoria, puntos) {
+            socket.emit('forzar_puntos', { codigo: miCodigoDeSala, evaluado: evaluado, categoria: categoria, puntos: puntos });
+        }
+
         function cerrarRonda() {
             socket.emit('cerrar_ronda_y_avanzar', { codigo: miCodigoDeSala });
         }
@@ -199,7 +198,6 @@
             }, 1000);
         });
 
-        // ACTUALIZADO: Dibuja la lista para votar
         socket.on('ir_a_votacion', function(datos_servidor) {
             document.getElementById('pantalla_juego').classList.remove('activa');
             document.getElementById('pantalla_votacion').classList.add('activa');
@@ -207,7 +205,9 @@
             const contenedor = document.getElementById('contenedor_votacion');
             const respuestas = datos_servidor.respuestas;
             const marcador = datos_servidor.marcador;
-            const limite = Math.max(1, Math.floor(datos_servidor.total_jugadores / 2));
+            
+            // NUEVO: Math.ceil para redondear siempre hacia arriba
+            const limite = Math.ceil(datos_servidor.total_jugadores / 2);
             
             let html = `<div style='background:#e9ecef; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;'>
                             <h4>Marcador Actual:</h4><p>`;
@@ -222,16 +222,27 @@
                 categorias.forEach(cat => {
                     html += `<h3 style="color: #007bff; border-bottom: 2px solid #ccc;">${cat}</h3><ul>`;
                     jugadores.forEach(jugador => {
-                        const texto = respuestas[jugador][cat] || "*(En blanco)*";
-                        const id_li = `li_${jugador}_${cat}`;
-                        const id_span = `span_voto_${jugador}_${cat}`;
+                        const info = respuestas[jugador][cat];
+                        const texto = info.texto !== "" ? info.texto : "*(En blanco)*";
+                        const puntos_auto = info.puntos_auto;
+                        
+                        const idSafe = (jugador + "_" + cat).replace(/\s+/g, '_');
+                        const id_li = `li_${idSafe}`;
+                        const id_span_voto = `span_voto_${idSafe}`;
+                        const id_span_pts = `span_pts_${idSafe}`;
                         
                         html += `
                             <li id="${id_li}" class="palabra-item">
                                 <strong>${jugador}:</strong> <span style="font-size: 1.3em;">${texto}</span>
+                                <span id="${id_span_pts}" style="color: #28a745; font-weight:bold; margin-left:10px;">(${puntos_auto} pts)</span>
                                 <br>
-                                <button onclick="votarContra('${jugador}', '${cat}', this)" style="width: auto; padding: 5px 15px; margin-top: 10px; background-color: #dc3545;">👎 Rechazar</button>
-                                <span id="${id_span}" style="color: #dc3545; margin-left: 10px; font-weight:bold; font-size:0.9em;"></span>
+                                <button onclick="votarContra('${jugador}', '${cat}', this)" class="boton-peque" style="background-color: #dc3545;">👎 Rechazar</button>
+                                
+                                <button onclick="cambiarPuntos('${jugador}', '${cat}', 50)" class="boton-peque" style="background-color: #ffc107; color: black; margin-left: 10px;">Vale 50</button>
+                                <button onclick="cambiarPuntos('${jugador}', '${cat}', 25)" class="boton-peque" style="background-color: #fd7e14; margin-left: 5px;">Vale 25</button>
+                                <button onclick="cambiarPuntos('${jugador}', '${cat}', 100)" class="boton-peque" style="background-color: #17a2b8; margin-left: 5px;">Vale 100</button>
+                                
+                                <span id="${id_span_voto}" style="color: #dc3545; margin-left: 10px; font-weight:bold; font-size:0.9em;"></span>
                             </li>
                         `;
                     });
@@ -245,17 +256,12 @@
             }
         });
 
-        // NUEVO: Recibir votos en tiempo real y tachar palabras
         socket.on('actualizar_voto', function(datos) {
-            const id_li = `li_${datos.evaluado}_${datos.categoria}`;
-            const id_span = `span_voto_${datos.evaluado}_${datos.categoria}`;
+            const idSafe = (datos.evaluado + "_" + datos.categoria).replace(/\s+/g, '_');
+            const li = document.getElementById(`li_${idSafe}`);
+            const span = document.getElementById(`span_voto_${idSafe}`);
             
-            const li = document.getElementById(id_li);
-            const span = document.getElementById(id_span);
-            
-            if(span) {
-                span.innerText = datos.num_votos > 0 ? `(${datos.num_votos} votos en contra)` : "";
-            }
+            if(span) span.innerText = datos.num_votos > 0 ? `(${datos.num_votos} votos en contra)` : "";
             
             if(li) {
                 if(datos.num_votos >= datos.limite) {
@@ -267,6 +273,16 @@
                     li.style.backgroundColor = "transparent";
                     li.style.color = "black";
                 }
+            }
+        });
+
+        socket.on('actualizar_puntos_UI', function(datos) {
+            const idSafe = (datos.evaluado + "_" + datos.categoria).replace(/\s+/g, '_');
+            const spanPts = document.getElementById(`span_pts_${idSafe}`);
+            
+            if(spanPts) {
+                spanPts.innerText = `(Forzado: ${datos.puntos} pts)`;
+                spanPts.style.color = "#fd7e14"; 
             }
         });
 
@@ -288,6 +304,7 @@
         });
 
         socket.on('error', function(mensaje) { alert(mensaje); });
+        
         function mostrarLobby(codigo, sala, esHost) {
             document.getElementById('pantalla_inicio').classList.remove('activa');
             document.getElementById('pantalla_lobby').classList.add('activa');
