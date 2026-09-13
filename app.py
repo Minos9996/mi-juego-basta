@@ -19,18 +19,19 @@ def inicio():
 
 @socketio.on('crear_sala')
 def crear_sala(datos):
-    nombre = datos['nombre']
+    nombre = datos['nombre'].strip()
     codigo = generar_codigo() 
     
     salas[codigo] = {
         'jugadores': [nombre],
-        'categorias': ["Nombre", "Apellido", "Ciudad o País", "Flor/Fruto", "Animal", "Destino Turístico Mexicano"],
+        'categorias': ["Nombre", "Animal", "Ciudad", "Flor/Fruto", "Cosa"],
         'host': nombre,
         'letras_usadas': [],
         'respuestas': {},
         'votos_contra': {}, 
         'puntos_manuales': {},
         'ronda_actual': 0,
+        'ronda_procesada': 0, # NUEVO: Evita duplicar pantallas
         'rondas_totales': 3,
         'puntuaciones': {nombre: 0}
     }
@@ -39,11 +40,15 @@ def crear_sala(datos):
 
 @socketio.on('unirse_sala')
 def unirse_sala(datos):
-    nombre = datos['nombre']
-    codigo = datos['codigo'].upper()
+    nombre = datos['nombre'].strip()
+    codigo = datos['codigo'].upper().strip()
+    
     if codigo in salas:
-        salas[codigo]['jugadores'].append(nombre)
-        salas[codigo]['puntuaciones'][nombre] = 0
+        # NUEVO: Si se había desconectado, no lo duplicamos en la lista
+        if nombre not in salas[codigo]['jugadores']:
+            salas[codigo]['jugadores'].append(nombre)
+            salas[codigo]['puntuaciones'][nombre] = 0
+            
         join_room(codigo)
         emit('ingreso_exitoso', {'codigo': codigo, 'sala': salas[codigo]})
         emit('sala_actualizada', salas[codigo], to=codigo)
@@ -83,45 +88,72 @@ def basta_presionado(datos):
 @socketio.on('enviar_respuestas')
 def recibir_respuestas(datos):
     codigo = datos['codigo']
-    nombre = datos['nombre']
+    nombre = datos['nombre'].strip()
+    
     if codigo in salas:
         sala = salas[codigo]
         sala['respuestas'][nombre] = datos['respuestas']
         
+        # NUEVO: El primero en entregar activa un tiempo de gracia de 4 segundos
+        if len(sala['respuestas']) == 1:
+            socketio.start_background_task(esperar_rezagados, codigo, sala['ronda_actual'])
+            
+        # Si todos llegan antes, avanzamos de inmediato
         if len(sala['respuestas']) == len(sala['jugadores']):
-            sala['votos_contra'] = {j: {cat: [] for cat in sala['categorias']} for j in sala['jugadores']}
-            sala['puntos_manuales'] = {j: {} for j in sala['jugadores']} 
+            procesar_votacion(codigo, sala['ronda_actual'])
+
+# NUEVA FUNCIÓN: Da 4 segundos de gracia y luego avanza a la fuerza
+def esperar_rezagados(codigo, ronda_actual):
+    socketio.sleep(4)
+    procesar_votacion(codigo, ronda_actual)
+
+# NUEVA FUNCIÓN: Lógica separada para calcular e ir a votar
+def procesar_votacion(codigo, ronda):
+    if codigo not in salas: return
+    sala = salas[codigo]
+    
+    # Si todos llegaron a tiempo, el temporizador fallará aquí para no duplicar la pantalla
+    if sala.get('ronda_procesada') == ronda: return
+    sala['ronda_procesada'] = ronda
+    
+    # Rellenar con blanco a los jugadores desconectados
+    for j in sala['jugadores']:
+        if j not in sala['respuestas']:
+            sala['respuestas'][j] = {}
             
-            respuestas_con_puntos = {}
-            for j in sala['jugadores']:
-                respuestas_con_puntos[j] = {}
-                
-            for cat in sala['categorias']:
-                lista_palabras = []
-                for j in sala['jugadores']:
-                    pal = sala['respuestas'][j].get(cat, "").strip().upper()
-                    if pal != "": lista_palabras.append(pal)
-                    
-                for j in sala['jugadores']:
-                    palabra = sala['respuestas'][j].get(cat, "").strip().upper()
-                    
-                    # NUEVA LÓGICA DE PUNTOS AUTOMÁTICOS
-                    if palabra == "":
-                        puntos = 0
-                    elif lista_palabras.count(palabra) == 1:
-                        puntos = 100
-                    elif lista_palabras.count(palabra) == 2:
-                        puntos = 50
-                    else:
-                        puntos = 25 # Si se repite 3 o más veces
-                    
-                    respuestas_con_puntos[j][cat] = {'texto': palabra, 'puntos_auto': puntos}
+    sala['votos_contra'] = {j: {cat: [] for cat in sala['categorias']} for j in sala['jugadores']}
+    sala['puntos_manuales'] = {j: {} for j in sala['jugadores']} 
+    
+    respuestas_con_puntos = {}
+    for j in sala['jugadores']:
+        respuestas_con_puntos[j] = {}
+        
+    for cat in sala['categorias']:
+        lista_palabras = []
+        for j in sala['jugadores']:
+            pal = sala['respuestas'][j].get(cat, "").strip().upper()
+            if pal != "": lista_palabras.append(pal)
             
-            emit('ir_a_votacion', {
-                'respuestas': respuestas_con_puntos,
-                'marcador': sala['puntuaciones'],
-                'total_jugadores': len(sala['jugadores'])
-            }, to=codigo)
+        for j in sala['jugadores']:
+            palabra = sala['respuestas'][j].get(cat, "").strip().upper()
+            
+            if palabra == "":
+                puntos = 0
+            elif lista_palabras.count(palabra) == 1:
+                puntos = 100
+            elif lista_palabras.count(palabra) == 2:
+                puntos = 50
+            else:
+                puntos = 25
+            
+            respuestas_con_puntos[j][cat] = {'texto': palabra, 'puntos_auto': puntos}
+    
+    # Usamos socketio.emit porque esto se ejecuta "de fondo"
+    socketio.emit('ir_a_votacion', {
+        'respuestas': respuestas_con_puntos,
+        'marcador': sala['puntuaciones'],
+        'total_jugadores': len(sala['jugadores'])
+    }, to=codigo)
 
 @socketio.on('votar_contra')
 def votar_contra(datos):
@@ -139,7 +171,6 @@ def votar_contra(datos):
         else:
             lista_votos.append(votante)
             
-        # NUEVO: Redondeo hacia arriba para el límite de votos
         limite = math.ceil(len(sala['jugadores']) / 2)
         
         emit('actualizar_voto', {
@@ -169,8 +200,6 @@ def cerrar_ronda(datos):
     codigo = datos['codigo']
     if codigo in salas:
         sala = salas[codigo]
-        
-        # NUEVO: Redondeo hacia arriba para evaluar al cerrar la ronda
         limite = math.ceil(len(sala['jugadores']) / 2)
         
         for cat in sala['categorias']:
@@ -192,7 +221,6 @@ def cerrar_ronda(datos):
                     if puntos_forzados is not None:
                         puntos = puntos_forzados
                     else:
-                        # REGLA 3 ACTUALIZADA
                         if palabras_validas.count(palabra) == 1:
                             puntos = 100
                         elif palabras_validas.count(palabra) == 2:

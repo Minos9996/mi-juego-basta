@@ -73,16 +73,31 @@
         let miCodigoDeSala = "";
         let soyHost = false;
 
+        // NUEVO: Auto-rellenar si el jugador refrescó la página
+        window.onload = function() {
+            const nombreGuardado = sessionStorage.getItem('basta_nombre');
+            const codigoGuardado = sessionStorage.getItem('basta_codigo');
+            if(nombreGuardado) document.getElementById('nombre_jugador').value = nombreGuardado;
+            if(codigoGuardado) document.getElementById('codigo_ingreso').value = codigoGuardado;
+        };
+
         function crearSala() {
-            const nombre = document.getElementById('nombre_jugador').value;
+            const nombre = document.getElementById('nombre_jugador').value.trim();
             if(!nombre) return alert("Escribe tu nombre");
+            
+            sessionStorage.setItem('basta_nombre', nombre); // Guardar memoria
             socket.emit('crear_sala', { nombre: nombre });
         }
 
         function unirseSala() {
-            const nombre = document.getElementById('nombre_jugador').value;
-            const codigo = document.getElementById('codigo_ingreso').value;
+            const nombre = document.getElementById('nombre_jugador').value.trim();
+            const codigo = document.getElementById('codigo_ingreso').value.trim();
             if(!nombre || !codigo) return alert("Falta nombre o código");
+            
+            // Guardar memoria para reconexiones
+            sessionStorage.setItem('basta_nombre', nombre);
+            sessionStorage.setItem('basta_codigo', codigo);
+            
             socket.emit('unirse_sala', { nombre: nombre, codigo: codigo });
         }
 
@@ -206,7 +221,6 @@
             const respuestas = datos_servidor.respuestas;
             const marcador = datos_servidor.marcador;
             
-            // NUEVO: Math.ceil para redondear siempre hacia arriba
             const limite = Math.ceil(datos_servidor.total_jugadores / 2);
             
             let html = `<div style='background:#e9ecef; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;'>
