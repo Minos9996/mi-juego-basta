@@ -38,7 +38,7 @@ def crear_sala(datos):
     
     salas[codigo] = {
         'jugadores': [nombre],
-        'categorias': ["Nombre", "Animal", "Ciudad", "Flor/Fruto", "Cosa"],
+        'categorias': ["Nombre", "Apellido", "Ciudad/País", "Flor/Fruto", "Animal/Especie", "Libro/Comic/Obra de teatro", "Personaje histórico/Persona o grupo famoso", "Platillo/Postre/Bebida", "Película/Serie/Caricatura", "Canción", "Marca", "Destino turístico mexicano"],
         'host': nombre,
         'letras_usadas': [],
         'respuestas': {},
