@@ -10,6 +10,20 @@ socketio = SocketIO(app)
 
 salas = {}
 
+# ABECEDARIO Y SISTEMA DE BOLSA GLOBAL DE LETRAS
+ABECEDARIO_BASE = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
+bolsa_letras = ABECEDARIO_BASE.copy()
+random.shuffle(bolsa_letras)
+
+def obtener_siguiente_letra():
+    global bolsa_letras
+    # Si la bolsa se queda sin letras, la volvemos a llenar y revolver
+    if not bolsa_letras:
+        bolsa_letras = ABECEDARIO_BASE.copy()
+        random.shuffle(bolsa_letras)
+    # Extraemos la primera letra de la bolsa
+    return bolsa_letras.pop(0)
+
 def generar_codigo():
     return ''.join(random.choices(string.ascii_uppercase, k=4))
 
@@ -24,14 +38,15 @@ def crear_sala(datos):
     
     salas[codigo] = {
         'jugadores': [nombre],
-        'categorias': ["Nombre", "Apellido", "Ciudad/País", "Flor/Fruto", "Animal", "Libro", "Personaje histórico", "Platillo/Postre", "Película/Serie", "Famos@", "Canción", "Marca", "Destino turístico mexicano"],
+        'categorias': ["Nombre", "Animal", "Ciudad", "Flor/Fruto", "Cosa"],
         'host': nombre,
         'letras_usadas': [],
         'respuestas': {},
         'votos_contra': {}, 
         'puntos_manuales': {},
         'ronda_actual': 0,
-        'ronda_procesada': 0, # NUEVO: Evita duplicar pantallas
+        'ronda_procesada': 0,
+        'basta_presionado': False,
         'rondas_totales': 3,
         'puntuaciones': {nombre: 0}
     }
@@ -44,7 +59,6 @@ def unirse_sala(datos):
     codigo = datos['codigo'].upper().strip()
     
     if codigo in salas:
-        # NUEVO: Si se había desconectado, no lo duplicamos en la lista
         if nombre not in salas[codigo]['jugadores']:
             salas[codigo]['jugadores'].append(nombre)
             salas[codigo]['puntuaciones'][nombre] = 0
@@ -69,10 +83,10 @@ def iniciar_juego(datos):
     if codigo in salas:
         sala = salas[codigo]
         sala['ronda_actual'] = 1 
+        sala['basta_presionado'] = False
         
-        abecedario = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
-        disponibles = [l for l in abecedario if l not in sala['letras_usadas']]
-        letra_elegida = random.choice(disponibles)
+        # NUEVO: Obtenemos la letra de la bolsa sin repetición
+        letra_elegida = obtener_siguiente_letra()
         sala['letras_usadas'].append(letra_elegida)
         
         emit('juego_iniciado', {
@@ -80,10 +94,23 @@ def iniciar_juego(datos):
             'categorias': sala['categorias'],
             'ronda': sala['ronda_actual']
         }, to=codigo)
+        
+        socketio.start_background_task(temporizador_limite_ronda, codigo, sala['ronda_actual'])
+
+def temporizador_limite_ronda(codigo, ronda):
+    socketio.sleep(180) # 3 minutos
+    if codigo in salas:
+        sala = salas[codigo]
+        if sala.get('ronda_actual') == ronda and not sala.get('basta_presionado', False):
+            sala['basta_presionado'] = True
+            socketio.emit('iniciar_reloj', {'quien_fue': 'El Tiempo (3 min)'}, to=codigo)
 
 @socketio.on('basta_presionado')
 def basta_presionado(datos):
-    emit('iniciar_reloj', {'quien_fue': datos['nombre']}, to=datos['codigo'])
+    codigo = datos['codigo']
+    if codigo in salas:
+        salas[codigo]['basta_presionado'] = True
+        emit('iniciar_reloj', {'quien_fue': datos['nombre']}, to=codigo)
 
 @socketio.on('enviar_respuestas')
 def recibir_respuestas(datos):
@@ -94,29 +121,23 @@ def recibir_respuestas(datos):
         sala = salas[codigo]
         sala['respuestas'][nombre] = datos['respuestas']
         
-        # NUEVO: El primero en entregar activa un tiempo de gracia de 4 segundos
         if len(sala['respuestas']) == 1:
             socketio.start_background_task(esperar_rezagados, codigo, sala['ronda_actual'])
             
-        # Si todos llegan antes, avanzamos de inmediato
         if len(sala['respuestas']) == len(sala['jugadores']):
             procesar_votacion(codigo, sala['ronda_actual'])
 
-# NUEVA FUNCIÓN: Da 4 segundos de gracia y luego avanza a la fuerza
 def esperar_rezagados(codigo, ronda_actual):
     socketio.sleep(4)
     procesar_votacion(codigo, ronda_actual)
 
-# NUEVA FUNCIÓN: Lógica separada para calcular e ir a votar
 def procesar_votacion(codigo, ronda):
     if codigo not in salas: return
     sala = salas[codigo]
     
-    # Si todos llegaron a tiempo, el temporizador fallará aquí para no duplicar la pantalla
     if sala.get('ronda_procesada') == ronda: return
     sala['ronda_procesada'] = ronda
     
-    # Rellenar con blanco a los jugadores desconectados
     for j in sala['jugadores']:
         if j not in sala['respuestas']:
             sala['respuestas'][j] = {}
@@ -148,7 +169,6 @@ def procesar_votacion(codigo, ronda):
             
             respuestas_con_puntos[j][cat] = {'texto': palabra, 'puntos_auto': puntos}
     
-    # Usamos socketio.emit porque esto se ejecuta "de fondo"
     socketio.emit('ir_a_votacion', {
         'respuestas': respuestas_con_puntos,
         'marcador': sala['puntuaciones'],
@@ -238,9 +258,10 @@ def cerrar_ronda(datos):
             emit('fin_del_juego', sala['puntuaciones'], to=codigo)
         else:
             sala['ronda_actual'] += 1
-            abecedario = ['A','B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q','R','S','T','U','V','Y','Z']
-            disponibles = [l for l in abecedario if l not in sala['letras_usadas']]
-            letra_elegida = random.choice(disponibles)
+            sala['basta_presionado'] = False
+            
+            # NUEVO: Obtenemos la letra de la bolsa sin repetición
+            letra_elegida = obtener_siguiente_letra()
             sala['letras_usadas'].append(letra_elegida)
             
             emit('juego_iniciado', {
@@ -248,6 +269,8 @@ def cerrar_ronda(datos):
                 'categorias': sala['categorias'],
                 'ronda': sala['ronda_actual']
             }, to=codigo)
+            
+            socketio.start_background_task(temporizador_limite_ronda, codigo, sala['ronda_actual'])
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)

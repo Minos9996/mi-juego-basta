@@ -44,6 +44,12 @@
 
     <div id="pantalla_juego" class="pantalla">
         <h2>Letra de la ronda: <span id="letra_activa" style="font-size: 2em; color: #007bff;">?</span></h2>
+        
+        <!-- NUEVO: Reloj general visual de 3 minutos -->
+        <h3 id="reloj_general" style="color: #6c757d; margin: 10px 0;">
+            Tiempo restante: <span id="tiempo_restante" style="color: #28a745; font-weight: bold;">03:00</span>
+        </h3>
+
         <div id="contenedor_categorias" style="text-align: left; margin: 20px 0;"></div>
         <h3 id="mensaje_basta" style="display: none; color: #dc3545;"></h3>
         <h1 id="temporizador" style="display: none; color: red; font-size: 4em; margin: 0;">10</h1>
@@ -72,8 +78,8 @@
         const socket = io();
         let miCodigoDeSala = "";
         let soyHost = false;
+        let intervaloGeneral = null; // Variable para controlar el reloj visual de 3 minutos
 
-        // NUEVO: Auto-rellenar si el jugador refrescó la página
         window.onload = function() {
             const nombreGuardado = sessionStorage.getItem('basta_nombre');
             const codigoGuardado = sessionStorage.getItem('basta_codigo');
@@ -85,7 +91,7 @@
             const nombre = document.getElementById('nombre_jugador').value.trim();
             if(!nombre) return alert("Escribe tu nombre");
             
-            sessionStorage.setItem('basta_nombre', nombre); // Guardar memoria
+            sessionStorage.setItem('basta_nombre', nombre);
             socket.emit('crear_sala', { nombre: nombre });
         }
 
@@ -94,7 +100,6 @@
             const codigo = document.getElementById('codigo_ingreso').value.trim();
             if(!nombre || !codigo) return alert("Falta nombre o código");
             
-            // Guardar memoria para reconexiones
             sessionStorage.setItem('basta_nombre', nombre);
             sessionStorage.setItem('basta_codigo', codigo);
             
@@ -182,6 +187,20 @@
             document.getElementById('temporizador').style.display = 'none';
             document.getElementById('mensaje_basta').style.display = 'none';
             
+            // NUEVO: Arrancar reloj visual de 3 minutos
+            if(intervaloGeneral) clearInterval(intervaloGeneral);
+            document.getElementById('reloj_general').style.display = 'block';
+            let segsRestantes = 180; // 3 minutos
+            
+            actualizarTextoReloj(segsRestantes);
+            intervaloGeneral = setInterval(function() {
+                segsRestantes--;
+                actualizarTextoReloj(segsRestantes);
+                if(segsRestantes <= 0) {
+                    clearInterval(intervaloGeneral);
+                }
+            }, 1000);
+            
             const contenedor = document.getElementById('contenedor_categorias');
             contenedor.innerHTML = ""; 
             datos.categorias.forEach(function(cat) {
@@ -193,7 +212,20 @@
             });
         });
 
+        function actualizarTextoReloj(segs) {
+            if(segs < 0) segs = 0;
+            const mins = Math.floor(segs / 60);
+            const rSegs = segs % 60;
+            const minsTxt = mins < 10 ? "0" + mins : mins;
+            const segsTxt = rSegs < 10 ? "0" + rSegs : rSegs;
+            document.getElementById('tiempo_restante').innerText = `${minsTxt}:${segsTxt}`;
+        }
+
         socket.on('iniciar_reloj', function(datos) {
+            // NUEVO: Detener y ocultar el reloj general de 3 minutos
+            if(intervaloGeneral) clearInterval(intervaloGeneral);
+            document.getElementById('reloj_general').style.display = 'none';
+
             document.getElementById('btn_basta').style.display = 'none';
             document.getElementById('mensaje_basta').innerText = "¡" + datos.quien_fue + " gritó BASTA!";
             document.getElementById('mensaje_basta').style.display = 'block';
